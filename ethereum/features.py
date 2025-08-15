@@ -156,11 +156,32 @@ def generate_features_udf_wrapper(graph_features):
     return generate_features_udf
 
 
-def generate_features_spark(communities, graph, spark):
+def save_comm_transactions(args):
+    graph_loc, comms_loc = args
+    graph = load_dump(graph_loc)
+    df_comms = []
+    for node, comm in load_dump(comms_loc):
+        sub_g = graph.induced_subgraph(comm)
+        df_comm = sub_g.get_edge_dataframe()
+        if not df_comm.empty:
+            df_vert = sub_g.get_vertex_dataframe()
+            df_comm["source"].replace(df_vert["name"], inplace=True)
+            df_comm["target"].replace(df_vert["name"], inplace=True)
+            df_comm.loc[:, "key"] = node
+            df_comms.append(df_comm.copy(deep=True))
+    if df_comms:
+        pd.concat(
+            df_comms, ignore_index=True
+        ).to_parquet(f"{MULTI_PROC_STAGING_LOCATION}{os.sep}{uuid.uuid4()}.parquet")
+
+
+def generate_features_spark(communities, graph_data, spark, num_cores=os.cpu_count()):
     reset_multi_proc_staging()
     chunk_size = 100_000
 
-    num_procs = round(len(communities) / chunk_size) + 1
+    graph = ig.Graph.DataFrame(graph_data.loc[:, ["source", "target"]], use_vids=False, directed=True)
+
+    num_procs = int((np.floor((len(communities) / chunk_size) / num_cores) + 1) * num_cores)
     comms_locs, params = create_workload_for_multi_proc(len(communities), communities, num_procs, graph, shuffle=True)
 
     del graph
@@ -170,15 +191,19 @@ def generate_features_spark(communities, graph, spark):
 
     spark.sparkContext.parallelize(comms_partitions, len(comms_partitions)).map(save_comm_transactions).collect()
 
-    partitions = len(comms_partitions) * 4
-    partitions = (partitions % os.cpu_count()) + partitions
-
     for temp_loc in comms_locs + params:
         os.remove(temp_loc)
 
-    response = spark.read.parquet(
-        str(MULTI_PROC_STAGING_LOCATION)
-    ).repartition(int(partitions), "key").groupby("key").applyInPandas(
+    graph_data = spark.createDataFrame(graph_data).withColumnRenamed("source", "src").withColumnRenamed("target", "trg")
+    community_transactions = spark.read.parquet(str(MULTI_PROC_STAGING_LOCATION))
+    community_transactions = community_transactions.join(
+        graph_data,
+        (community_transactions["source"] == graph_data["src"]) &
+        (community_transactions["target"] == graph_data["trg"]),
+        how="left"
+    ).drop("src", "trg")
+
+    response = community_transactions.groupby("key").applyInPandas(
         generate_features_udf_wrapper(True), schema=SCHEMA_FEAT_UDF
     ).toPandas()
     
