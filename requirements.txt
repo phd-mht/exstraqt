@@ -1,4 +1,4 @@
-# conda create -n exstraqt python=3.11.8
+# conda create -n exstraqt python=3.11.3
 
 jupyterlab==4.4.5
 numpy==2.3.2
