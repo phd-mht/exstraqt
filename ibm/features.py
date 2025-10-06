@@ -211,8 +211,11 @@ def save_comm_transactions(args):
         df_comm = sub_g.get_edge_dataframe()
         if not df_comm.empty:
             df_vert = sub_g.get_vertex_dataframe()
-            df_comm["source"].replace(df_vert["name"], inplace=True)
-            df_comm["target"].replace(df_vert["name"], inplace=True)
+            df_comm.loc[:, "src"] = df_comm["source"].apply(lambda x: df_vert.loc[x, "name"])
+            df_comm.loc[:, "tgt"] = df_comm["target"].apply(lambda x: df_vert.loc[x, "name"])
+            del df_comm["source"]
+            del df_comm["target"]
+            df_comm = df_comm.rename(columns={"src": "source", "tgt": "target"})
             df_comm.loc[:, "key"] = node
             df_comms.append(df_comm.copy(deep=True))
     if df_comms:
