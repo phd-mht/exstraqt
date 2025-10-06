@@ -3,7 +3,6 @@
 # apt install openjdk-21-jdk
 # apt-get -y install build-essential
 
-
 snapml==1.16.4
 numpy==1.26.0
 pandas==2.3.1
